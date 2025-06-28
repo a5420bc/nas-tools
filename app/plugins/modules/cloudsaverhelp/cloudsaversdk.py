@@ -245,7 +245,7 @@ class CloudSaverSDK:
 
             # 记录响应状态
             log.debug(f"API 响应状态码: {response.status_code}")
-            if not response:
+            if response is None:
                 raise Exception('搜索请求失败')
 
             # 处理401未授权的情况

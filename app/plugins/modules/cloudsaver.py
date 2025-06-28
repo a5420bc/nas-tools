@@ -1,9 +1,11 @@
+import json
 from app.media.douban import DouBan
 from app.plugins.modules.cloudsaverhelp.cloudsaversdk import CloudResource
 from typing import Dict, List
 from app.plugins.modules._base import _IPluginModule
 from app.plugins.modules.cloudsaverhelp import CloudSaverSDK
 from app.plugins.modules.cloudsaverhelp import MediaFilter
+from app.plugins.modules.cloudsaverhelp.cloud189autosave import Cloud189AutoSaveSDK
 from typing import Dict, List
 from threading import Event
 from datetime import datetime
@@ -68,79 +70,81 @@ class CloudSaver(_IPluginModule):
     _username = ""
     _password = ""
     _cloudsaver_sdk = None
+    _cloud189_sdk = None
     _quark_folder_id = ""
     _quark_cookie = ""
     _tianyi_folder_id = ""
     _tianyi_username = ""
-    _tianyi_pasword = ""
-    _tianyi_captcha = ""
+    _tianyi_account_id = ""
+    _tianyi_auto_save_path = ""
     _aliyun_folder_id = ""
     _baidu_folder_id = ""
     _douban_content_types = []
+    _min_douban_rating = 0.0  # 最低豆瓣评分要求
 
     def init_config(self, config: dict = None):
         """初始化配置"""
-        if config:
-            self._enable = config.get("enable", False)
-            self._base_url = config.get("base_url", "")
-            self._username = config.get("username", "")
-            self._password = config.get("password", "")
+        self._enable = config.get("enable", False)
+        self._base_url = config.get("base_url", "")
+        self._username = config.get("username", "")
+        self._password = config.get("password", "")
 
-            # 获取启用的网盘类型
-            enabled_cloud_types = config.get("enabled_cloud_types", [])
-            if isinstance(enabled_cloud_types, list):
+          # 获取启用的网盘类型
+        enabled_cloud_types = config.get("enabled_cloud_types", [])
+        if isinstance(enabled_cloud_types, list):
                 self._enabled_cloud_types = [
                     int(ct) for ct in enabled_cloud_types if str(ct).isdigit()]
-            else:
-                self._enabled_cloud_types = [1]  # 默认只启用天翼云盘
-
-            # 获取豆瓣内容类型
-            self._douban_content_types = config.get(
-                "douban_content_types", [])
-            data = config.get("douban_content_types")
-            log.info(f"获取豆瓣订阅类型{data}")
-
-            # 获取网盘配置
-            self._quark_folder_id = config.get("quark_folder_id", "")
-            self._quark_cookie = config.get("quark_cookie", "")
-            self._tianyi_folder_id = config.get("tianyi_folder_id", "")
-            self._tianyi_username = config.get("tianyi_username", "")
-            self._tianyi_password = config.get("tianyi_password", "")
-            self._tianyi_captcha = config.get("tianyi_captcha", "")
-            self._aliyun_folder_id = config.get("aliyun_folder_id", "")
-            self._baidu_folder_id = config.get("baidu_folder_id", "")
-
-            # 初始化CloudSaver SDK
-            self._cloudsaver_sdk = CloudSaverSDK(config={
-                'base_url': self._base_url,
-                'username': self._username,
-                'password': self._password,
-                'enabled_cloud_types': self._enabled_cloud_types
-            })
         else:
-            # 提供默认配置用于测试
-            self._enable = False
-            self._base_url = "http://43.142.68.146:8008/"
-            self._username = "a5420bc"
-            self._password = "jin198250"
-            self._enabled_cloud_types = [1]
-            self._douban_content_types = []
-            self._quark_folder_id = ""
-            self._quark_cookie = ""
-            self._tianyi_folder_id = ""
-            self._tianyi_username = ""
-            self._tianyi_password = ""
-            self._tianyi_captcha = ""
-            self._aliyun_folder_id = ""
-            self._baidu_folder_id = ""
+            self._enabled_cloud_types = [1]  # 默认只启用天翼云盘
 
-            self._cloudsaver_sdk = CloudSaverSDK(config={
-                'base_url': self._base_url,
-                'username': self._username,
-                'password': self._password,
-                'enabled_cloud_types': self._enabled_cloud_types
+        # 天翼云盘配置
+        self._tianyi_account_id = config.get("tianyi_account_id", "")
+        self._tianyi_auto_save_path = config.get("tianyi_auto_save_path", "")
+        
+        # 初始化天翼云盘SDK
+        self._douban_content_types = config.get(
+            "douban_content_types", [])
+        data = config.get("douban_content_types")
+        log.info(f"获取豆瓣订阅类型{data}")
+
+        # 获取最低豆瓣评分要求
+        self._min_douban_rating = float(
+            config.get("min_douban_rating", 0.0))
+        log.info(f"设置最低豆瓣评分要求: {self._min_douban_rating}")
+        # 获取网盘配置
+        self._quark_folder_id = config.get("quark_folder_id", "")
+        self._quark_cookie = config.get("quark_cookie", "")
+        self._tianyi_folder_id = config.get("tianyi_folder_id", "")
+        self._tianyi_captcha = config.get("tianyi_captcha", "")
+        self._tianyi_account_id = config.get("tianyi_account_id")
+        self._tianyi_auto_save_path = config.get("tianyi_auto_save_path", "")
+        self._aliyun_folder_id = config.get("aliyun_folder_id", "")
+        self._baidu_folder_id = config.get("baidu_folder_id", "")
+
+        # 初始化CloudSaver SDK
+        self._cloudsaver_sdk = CloudSaverSDK(config={
+            'base_url': self._base_url,
+            'username': self._username,
+            'password': self._password,
+            'enabled_cloud_types': self._enabled_cloud_types
+        })
+
+        # 初始化天翼云盘SDK
+        if self._tianyi_account_id:
+            cloud189_base_url = config.get("cloud189_base_url", "")
+            cloud189_api_key = config.get("cloud189_api_key", "")
+            if not cloud189_base_url:
+                self.warning("Cloud189 API地址未配置，天翼云盘功能将不可用")
+            if not cloud189_api_key:
+                self.warning("Cloud189 API密钥未配置，天翼云盘功能将不可用")
+            self._cloud189_sdk = Cloud189AutoSaveSDK({
+                "base_url": cloud189_base_url,
+                "api_key": cloud189_api_key,
+                "account_id": self._tianyi_account_id,
+                "auto_save_path": self._tianyi_auto_save_path,
+                "target_folder_id": self._tianyi_folder_id
             })
-            log.info("我开始搜索啦")
+
         self.refresh_rss()
 
     def get_state(self):
@@ -242,35 +246,49 @@ class CloudSaver(_IPluginModule):
             },
             {
                 'type': 'details',
-                'summary': '豆瓣热门内容类型',
-                'tooltip': '选择要获取的豆瓣热门内容类型',
+                'summary': '豆瓣订阅配置',
+                'tooltip': '选择要获取的豆瓣热门内容类型以及设置最低订阅分数',
                 'content': [
                     [
                         {
                             'id': 'douban_content_types',
                             'type': 'form-selectgroup',
-                            'content': {
-                                'hot_movie': {
-                                    'id': 'hot_movie',
-                                    'name': '热门电影',
-                                },
-                                'new_movie': {
-                                    'id': 'new_movie',
-                                    'name': '最新电影',
-                                },
-                                'hot_tv': {
-                                    'id': 'hot_tv',
-                                    'name': '热门电视剧',
-                                },
-                                'hot_animation': {
-                                    'id': 'hot_animation',
-                                    'name': '热门动画',
-                                },
-                                'hot_show': {
-                                    'id': 'hot_show',
-                                    'name': '热门综艺',
+                                    'content':  {
+                                        'hot_movie': {
+                                            'id': 'hot_movie',
+                                            'name': '热门电影',
+                                        },
+                                        'new_movie': {
+                                            'id': 'new_movie',
+                                            'name': '最新电影',
+                                        },
+                                        'hot_tv': {
+                                            'id': 'hot_tv',
+                                            'name': '热门电视剧',
+                                        },
+                                        'hot_animation': {
+                                            'id': 'hot_animation',
+                                            'name': '热门动画',
+                                        },
+                                        'hot_show': {
+                                            'id': 'hot_show',
+                                            'name': '热门综艺',
+                                        }
+                                    }
+                        },
+                    ],
+                    [
+                        {
+                            'title': '最低豆瓣评分',
+                            'required': "",
+                            'tooltip': '只订阅评分大于等于此值的内容，设置为0表示不过滤评分。注意：评分为0或无评分的内容视为满足要求',
+                            'type': 'text',
+                            'content': [
+                                {
+                                    'id': 'min_douban_rating',
+                                    'placeholder': '0.0',
                                 }
-                            }
+                            ]
                         }
                     ]
                 ]
@@ -294,21 +312,6 @@ class CloudSaver(_IPluginModule):
                             ]
                         }
                     ],
-                    [
-                        {
-                            'title': '夸克网盘Cookie',
-                            'required': "",
-                            'tooltip': '夸克网盘的Cookie信息，用于身份验证，可通过浏览器开发者工具获取',
-                            'type': 'textarea',
-                            'content': [
-                                {
-                                    'id': 'quark_cookie',
-                                    'placeholder': '请输入夸克网盘Cookie',
-                                    'rows': 3
-                                }
-                            ]
-                        }
-                    ]
                 ]
             },
             {
@@ -332,40 +335,52 @@ class CloudSaver(_IPluginModule):
                     ],
                     [
                         {
-                            'title': '天翼云盘用户名',
+                            'title': 'cloud189-auto-save帐号ID',
                             'required': "",
-                            'tooltip': '天翼云盘登录用户名（手机号）',
+                            'tooltip': '天翼云自动转存系统帐号ID',
                             'type': 'text',
                             'content': [
                                 {
-                                    'id': 'tianyi_username',
-                                    'placeholder': '请输入天翼云盘用户名',
-                                }
-                            ]
-                        },
-                        {
-                            'title': '天翼云盘密码',
-                            'required': "",
-                            'tooltip': '天翼云盘登录密码',
-                            'type': '*',
-                            'content': [
-                                {
-                                    'id': 'tianyi_*',
-                                    'placeholder': '请输入天翼云盘密码',
+                                    'id': 'tianyi_account_id',
+                                    'placeholder': '请输入天翼云自动转存系统帐号ID',
                                 }
                             ]
                         }
                     ],
                     [
                         {
-                            'title': '天翼云盘验证码',
+                            'title': 'Cloud189 API地址',
                             'required': "",
-                            'tooltip': '天翼云盘登录验证码（如需要）',
+                            'tooltip': 'Cloud189自动转存服务的API地址，如：https://your-cloud189-server.com',
                             'type': 'text',
                             'content': [
                                 {
-                                    'id': 'tianyi_captcha',
-                                    'placeholder': '请输入验证码（如需要）',
+                                    'id': 'cloud189_base_url',
+                                    'placeholder': 'https://your-cloud189-server.com',
+                                }
+                            ]
+                        },
+                        {
+                            'title': 'Cloud189 API密钥',
+                            'required': "required",
+                            'tooltip': 'Cloud189自动转存服务的API密钥',
+                            'type': 'password',
+                            'content': [
+                                {
+                                    'id': 'cloud189_api_key',
+                                    'placeholder': '请输入API密钥',
+                                }
+                            ]
+                        },
+                        {
+                            'title': '自动保存路径',
+                            'required': "",
+                            'tooltip': '天翼云盘中自动保存的路径，初始路径为/全部文件/，后面添加自定义目录',
+                            'type': 'text',
+                            'content': [
+                                {
+                                    'id': 'tianyi_auto_save_path',
+                                    'placeholder': '例如：/全部文件/电影/豆瓣热门',
                                 }
                             ]
                         }
@@ -416,129 +431,144 @@ class CloudSaver(_IPluginModule):
             },
         ]
 
-    def refresh_rss(self):
-        """
-        刷新豆瓣RSS内容
-        根据配置的豆瓣内容类型，调用对应的豆瓣API方法获取内容
-        """
-        if not self._douban_content_types:
-            self.warn("未配置豆瓣内容类型，无法刷新RSS")
+    def get_douban_content(self, content_type: str) -> List[Dict]:
+        """获取指定类型的豆瓣内容"""
+        method_name = DOUBAN_METHOD_MAP.get(content_type)
+        if not method_name:
+            self.warn(f"未知的豆瓣内容类型: {content_type}")
             return []
 
-        # 创建豆瓣API实例
         douban = DouBan()
-        all_results = []
-        
-        # 调试模式：只处理第一个内容类型
-        if self._douban_content_types:
-            self.info(f"调试模式：只处理第一个内容类型 {self._douban_content_types[0]}，跳过其余内容类型")
-            self._douban_content_types = self._douban_content_types[:1]
+        method = getattr(douban, method_name, None)
+        if not method:
+            self.warn(f"豆瓣API中不存在方法: {method_name}")
+            return []
 
-        # 遍历配置的豆瓣内容类型
-        for content_type in self._douban_content_types:
-            # 从映射中获取对应的方法名
-            method_name = DOUBAN_METHOD_MAP.get(content_type)
-            if not method_name:
-                self.warn(f"未知的豆瓣内容类型: {content_type}")
+        results = method()
+        self.info(f"获取豆瓣内容 {content_type} 成功，共 {len(results)} 条")
+        
+        # 调试信息
+        print("豆瓣内容结果列表:")
+        for i, res in enumerate(results):
+            title = res.get('title', '无标题')
+            douban_id = res.get('orgid') or res.get('id', '').replace('DB:', '')
+            print(f"  {i+1}. 标题: {title}, ID: {douban_id}")
+
+        # TODO 调试用，限制结果数量
+        results = results[2:3]
+        print(f"限制为只处理第一个结果: {results[0].get('title', '无标题')}")
+        return results
+
+    def filter_by_rating(self, results: List[Dict], min_rating: float) -> List[Dict]:
+        """根据评分过滤豆瓣内容"""
+        return [res for res in results
+               if not res.get('vote') or float(res.get('vote', 0)) >= min_rating]
+
+    def search_cloud_resources(self, douban_results: List[Dict]) -> List[CloudResource]:
+        """搜索云盘资源"""
+        if not self._cloudsaver_sdk or not self._cloudsaver_sdk.enabled:
+            self.warn("CloudSaver SDK未初始化或未启用")
+            return []
+
+        cloud_resources = []
+        for result in douban_results:
+            title = result.get('title', '')
+            douban_id = result.get('orgid') or result.get('id', '').replace('DB:', '')
+            
+            if not title or not douban_id:
+                self.warn(f"跳过无效的豆瓣结果 - 标题:{title}, ID:{douban_id}")
                 continue
 
             try:
-                # 使用getattr动态调用对应的方法
-                method = getattr(douban, method_name)
-                if not method:
-                    self.warn(f"豆瓣API中不存在方法: {method_name}")
+                self.info(f"开始搜索云盘资源 - 标题:{title}, 豆瓣ID:{douban_id}")
+                # 搜索云盘资源
+                resources = self._cloudsaver_sdk.search(title)
+                if not resources:
+                    self.info(f"未找到标题为'{title}'的云盘资源")
                     continue
-
-                # 调用方法获取结果
-                # 调用方法获取结果
-                results = method()
-
-                # 打印调试信息
-                self.info(f"获取豆瓣内容 {content_type} 成功，共 {len(results)} 条")
-                
-                # 打印每个结果的标题和ID，检查是否有重复
-                print("豆瓣内容结果列表:")
-                for i, res in enumerate(results):
-                    title = res.get('title', '无标题')
-                    douban_id = res.get('orgid') or res.get('id', '').replace('DB:', '')
-                    print(f"  {i+1}. 标题: {title}, ID: {douban_id}")
-                
-                #TODO
-                results = results[:1]
-                print(f"限制为只处理第一个结果: {results[0].get('title', '无标题')}")
-                
-                # 使用CloudSaverSDK搜索云盘资源
-                if results and self._cloudsaver_sdk and self._cloudsaver_sdk.enabled:
-                    for result in results:
-                        try:
-                            # 获取标题和豆瓣ID
-                            title = result.get('title', '')
-                            douban_id = result.get('orgid') or result.get('id', '').replace('DB:', '')
-                            
-                            if not title or not douban_id:
-                                continue
-                            
-                            # 使用豆瓣ID作为key查询历史记录
-                            history_record = self.get_history(key=douban_id)
-                            
-                            # 如果已经有历史记录，且状态为SAVED或FOUND，则跳过搜索
-                            if history_record and history_record.get('state') in ['SAVED', 'FOUND']:
-                                self.info(f"媒体已经在历史记录中: {title}，豆瓣ID: {douban_id}，状态: {history_record.get('state')}，跳过搜索")
-                                result['cloud_resources'] = history_record.get('cloud_links', [])
-                                result['found_in_cloud'] = True
-                                continue
-                                
-                            self.info(f"开始搜索云盘资源: {title}，豆瓣ID: {douban_id}")
-                            # 使用CloudSaverSDK搜索云盘资源
-                            cloud_resources = self._cloudsaver_sdk.search(title, self._enabled_cloud_types)
-                            
-                            if cloud_resources:
-                                self.info(f"找到云盘资源: {title}，共 {len(cloud_resources)} 条")
-                                
-                                # 创建MediaFilter实例
-                                media_filter = MediaFilter()
-                                
-                                # 使用MediaFilter过滤资源
-                                filtered_resources = media_filter.filter_media(result, cloud_resources)
-                                
-                                if filtered_resources:
-                                    self.info(f"过滤后的资源: {title}，共 {len(filtered_resources)} 条")
-                                    # 将过滤后的资源添加到结果中
-                                    result['cloud_resources'] = filtered_resources
-                                    result['found_in_cloud'] = True
-                                    
-                                    # 记录搜索历史，使用豆瓣ID作为key
-                                    self.__update_history_with_douban_id(
-                                        douban_id=douban_id,
-                                        title=title,
-                                        content=filtered_resources[0].get('content', ''),
-                                        cloud_type=CLOUD_TYPE_MAP.get(filtered_resources[0].get('cloudType'), '未知'),
-                                        state='FOUND',
-                                        image=result.get('image', '../static/img/plugins/cloud.jpg'),
-                                        cloud_links=filtered_resources
-                                    )
-                                    self.info(f"已保存到历史记录: {title}，豆瓣ID: {douban_id}")
-                                else:
-                                    self.info(f"未找到匹配的云盘资源: {title}")
-                                    result['cloud_resources'] = []
-                                    result['found_in_cloud'] = False
-                            else:
-                                self.info(f"未找到云盘资源: {title}")
-                                result['cloud_resources'] = []
-                                result['found_in_cloud'] = False
-                        except Exception as e:
-                            self.error(f"搜索云盘资源失败: {title}, 错误: {str(e)}")
-                            result['cloud_resources'] = []
-                            result['found_in_cloud'] = False
-                # 添加到总结果中
-                if results:
-                    for result in results:
-                        result['content_type'] = content_type
-                    all_results.extend(results)
+                    
+                self.info(f"找到 {len(resources)} 条云盘资源")
+                # 使用MediaFilter过滤资源
+                media_filter = MediaFilter()
+                filtered_resources = media_filter.filter_media(result, resources)
+                if not filtered_resources:
+                    self.info("经过MediaFilter过滤后无匹配资源")
+                    continue
+                    
+                self.info(f"过滤后剩余 {len(filtered_resources)} 条匹配资源")
+                cloud_resources.extend(filtered_resources)
             except Exception as e:
-                self.error(f"获取豆瓣内容 {content_type} 失败: {str(e)}")
+                self.error(f"搜索云盘资源失败: {str(e)}")
+                import traceback
+                self.debug(f"错误详情:\n{traceback.format_exc()}")
 
-        return all_results
+        return cloud_resources
+
+    def save_to_cloud(self, resources: List[CloudResource]) -> bool:
+        """保存资源到云盘"""
+        if not resources:
+            return False
+
+        self.info(f"开始保存资源到云盘，共 {len(resources)} 条资源")
+        for i, resource in enumerate(resources, 1):
+            self.info(f"资源 {i}/{len(resources)}: {resource}")
+
+        success = True
+        for resource in resources:
+            try:
+                # 直接按照字典结构处理
+                if resource["cloudType"] == "tianyi" and self._cloud189_sdk:
+                    share_link = resource["cloudLinks"][0]["link"]
+                    self._cloud189_sdk.save_to_cloud(share_link, resource['title'])
+                # 可以添加其他云盘类型的处理
+            except Exception as e:
+                self.error(f"保存到云盘失败: {e}")
+                success = False
+
+        return success
+
+    def refresh_rss(self):
+        """刷新豆瓣RSS内容"""
+        if not self._douban_content_types:
+            self.warn("未配置豆瓣内容类型，无法刷新RSS")
+            return
+
+        # 调试模式：只处理第一个内容类型
+        self._douban_content_types = self._douban_content_types[:1]
+        self.info(f"调试模式：只处理第一个内容类型 {self._douban_content_types[0]}")
+
+        try:
+            for content_type in self._douban_content_types:
+                self.info(f"开始处理内容类型: {content_type}")
+                
+                # 1. 获取豆瓣内容
+                douban_results = self.get_douban_content(content_type)
+                if not douban_results:
+                    self.info(f"未获取到 {content_type} 类型的豆瓣内容")
+                    continue
+                self.info(f"获取到 {len(douban_results)} 条豆瓣内容")
+
+                # 2. 过滤评分
+                filtered_results = self.filter_by_rating(douban_results, self._min_douban_rating)
+                if not filtered_results:
+                    self.info("没有满足评分要求的内容")
+                    continue
+                self.info(f"过滤后剩余 {len(filtered_results)} 条满足评分要求的内容")
+
+                # 3. 搜索云盘资源
+                cloud_resources = self.search_cloud_resources(filtered_results)
+                if not cloud_resources:
+                    self.info("未找到匹配的云盘资源")
+                    continue
+                self.info(f"找到 {len(cloud_resources)} 条云盘资源")
+
+                # 4. 保存到云盘
+                if self.save_to_cloud(cloud_resources):
+                    self.info(f"成功保存 {len(cloud_resources)} 条资源到云盘")
+                else:
+                    self.error("保存到云盘失败")
+        except Exception as e:
+            self.error(f"处理内容类型 {content_type} 失败: {str(e)}")
 
     def search_resources(self, keyword: str) -> List[CloudResource]:
         """搜索云盘资源"""
@@ -555,10 +585,10 @@ class CloudSaver(_IPluginModule):
                 for result in results:
                     cloud_type_name = CLOUD_TYPE_MAP.get(
                         result.get('cloudType'), '未知')
-                    
+
                     # 尝试从结果中获取豆瓣ID
                     douban_id = result.get('doubanId') or result.get('id')
-                    
+
                     if douban_id:
                         # 使用豆瓣ID作为key记录搜索历史
                         self.__update_history_with_douban_id(
@@ -569,7 +599,8 @@ class CloudSaver(_IPluginModule):
                             state='FOUND',
                             cloud_links=result.get('cloudLinks', [])
                         )
-                        self.info(f"已保存到历史记录: {result.get('title', keyword)}，ID: {douban_id}")
+                        self.info(
+                            f"已保存到历史记录: {result.get('title', keyword)}，ID: {douban_id}")
                     else:
                         # 如果没有豆瓣ID，使用旧的方法记录历史
                         self.__update_history(
@@ -777,3 +808,26 @@ class CloudSaver(_IPluginModule):
     def stop_service(self):
         """停止服务"""
         self._event.set()
+
+    def __update_history_with_douban_id(self, douban_id, title, content, cloud_type, state, image=None, cloud_links=None):
+        """
+        使用豆瓣ID作为key插入历史记录
+        """
+        if not douban_id or not title:
+            return
+
+        value = {
+            "id": douban_id,
+            "title": title,
+            "content": content or "",
+            "cloud_type": cloud_type or "未知",
+            "state": state,
+            "image": image or "../static/img/plugins/cloud.jpg",  # 使用默认云盘图标或传入的图片
+            "cloud_links": cloud_links or [],
+            "add_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+        if self.get_history(key=douban_id):
+            self.update_history(key=douban_id, value=value)
+        else:
+            self.history(key=douban_id, value=value)
