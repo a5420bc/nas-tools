@@ -447,16 +447,6 @@ class CloudSaver(_IPluginModule):
         results = method()
         self.info(f"获取豆瓣内容 {content_type} 成功，共 {len(results)} 条")
         
-        # 调试信息
-        print("豆瓣内容结果列表:")
-        for i, res in enumerate(results):
-            title = res.get('title', '无标题')
-            douban_id = res.get('orgid') or res.get('id', '').replace('DB:', '')
-            print(f"  {i+1}. 标题: {title}, ID: {douban_id}")
-
-        # TODO 调试用，限制结果数量
-        results = results[2:3]
-        print(f"限制为只处理第一个结果: {results[0].get('title', '无标题')}")
         return results
 
     def filter_by_rating(self, results: List[Dict], min_rating: float) -> List[Dict]:
@@ -465,7 +455,7 @@ class CloudSaver(_IPluginModule):
                if not res.get('vote') or float(res.get('vote', 0)) >= min_rating]
 
     def search_cloud_resources(self, douban_results: List[Dict]) -> List[CloudResource]:
-        """搜索云盘资源"""
+        """搜索云盘资源并添加豆瓣ID"""
         if not self._cloudsaver_sdk or not self._cloudsaver_sdk.enabled:
             self.warn("CloudSaver SDK未初始化或未启用")
             return []
@@ -496,46 +486,79 @@ class CloudSaver(_IPluginModule):
                     continue
                     
                 self.info(f"过滤后剩余 {len(filtered_resources)} 条匹配资源")
+                # 为每个资源添加豆瓣ID
+                for res in filtered_resources:
+                    res['doubanId'] = douban_id
                 cloud_resources.extend(filtered_resources)
             except Exception as e:
                 self.error(f"搜索云盘资源失败: {str(e)}")
                 import traceback
                 self.debug(f"错误详情:\n{traceback.format_exc()}")
-
+        
         return cloud_resources
-
-    def save_to_cloud(self, resources: List[CloudResource]) -> bool:
-        """保存资源到云盘"""
+    def save_to_cloud(self, resources: List[CloudResource]) -> int:
+        """保存资源到云盘(按豆瓣ID分组转存)，返回成功保存的豆瓣ID数量"""
         if not resources:
-            return False
-
+            return 0
+    
         self.info(f"开始保存资源到云盘，共 {len(resources)} 条资源")
-        for i, resource in enumerate(resources, 1):
-            self.info(f"资源 {i}/{len(resources)}: {resource}")
-
-        success = True
+        unique_douban_ids = len({r.get('doubanId') for r in resources if r.get('doubanId')})
+        self.info(f"共 {unique_douban_ids} 个豆瓣资源需要处理")
+    
+        saved_ids = set()  # 记录已成功转存的豆瓣ID
+    
         for resource in resources:
             try:
+                # 获取豆瓣ID
+                douban_id = resource.get('doubanId')
+                if not douban_id or douban_id in saved_ids:
+                    continue
+    
                 # 直接按照字典结构处理
                 if resource["cloudType"] == "tianyi" and self._cloud189_sdk:
                     share_link = resource["cloudLinks"][0]["link"]
-                    self._cloud189_sdk.save_to_cloud(share_link, resource['title'])
+                    if self._cloud189_sdk.save_to_cloud(share_link, resource['title']):
+                        saved_ids.add(douban_id)
+                        self.info(f"成功保存豆瓣ID {douban_id} 的资源")
+                        # 记录成功转存历史
+                        self.__update_history_with_douban_id(
+                            douban_id=douban_id,
+                            title=resource['title'],
+                            content=f"已成功保存到{resource['cloudType']}云盘",
+                            cloud_type=resource['cloudType'],
+                            state='SAVED',
+                            cloud_links=resource['cloudLinks']
+                        )
+                    else:
+                        # 记录转存失败历史
+                        self.__update_history_with_douban_id(
+                            douban_id=douban_id,
+                            title=resource['title'],
+                            content=f"保存到{resource['cloudType']}云盘失败",
+                            cloud_type=resource['cloudType'],
+                            state='ERROR',
+                            cloud_links=resource['cloudLinks']
+                        )
                 # 可以添加其他云盘类型的处理
             except Exception as e:
-                self.error(f"保存到云盘失败: {e}")
-                success = False
-
-        return success
+                self.error(f"保存豆瓣ID {douban_id} 失败: {e}")
+                # 记录异常历史
+                self.__update_history_with_douban_id(
+                    douban_id=douban_id,
+                    title=resource.get('title', '未知标题'),
+                    content=f"保存失败: {str(e)}",
+                    cloud_type=resource.get('cloudType', '未知'),
+                    state='ERROR',
+                    cloud_links=resource.get('cloudLinks', [])
+                )
+        
+        return len(saved_ids)
 
     def refresh_rss(self):
         """刷新豆瓣RSS内容"""
         if not self._douban_content_types:
             self.warn("未配置豆瓣内容类型，无法刷新RSS")
             return
-
-        # 调试模式：只处理第一个内容类型
-        self._douban_content_types = self._douban_content_types[:1]
-        self.info(f"调试模式：只处理第一个内容类型 {self._douban_content_types[0]}")
 
         try:
             for content_type in self._douban_content_types:
@@ -555,18 +578,28 @@ class CloudSaver(_IPluginModule):
                     continue
                 self.info(f"过滤后剩余 {len(filtered_results)} 条满足评分要求的内容")
 
-                # 3. 搜索云盘资源
+                # 3. 过滤并搜索云盘资源
+                # 先过滤掉已保存的资源
+                filtered_results = [res for res in filtered_results
+                                 if not self._is_resource_saved(res)]
+                
+                if not filtered_results:
+                    self.info("所有资源已保存过，跳过搜索和保存")
+                    continue
+                    
                 cloud_resources = self.search_cloud_resources(filtered_results)
                 if not cloud_resources:
                     self.info("未找到匹配的云盘资源")
                     continue
-                self.info(f"找到 {len(cloud_resources)} 条云盘资源")
+                self.info(f"找到 {len(cloud_resources)} 条新资源")
 
                 # 4. 保存到云盘
-                if self.save_to_cloud(cloud_resources):
-                    self.info(f"成功保存 {len(cloud_resources)} 条资源到云盘")
+                saved_count = self.save_to_cloud(cloud_resources)
+                unique_douban_ids = len({r.get('doubanId') for r in cloud_resources if r.get('doubanId')})
+                if saved_count > 0:
+                    self.info(f"成功保存: {saved_count}/{unique_douban_ids} (成功/总数)")
                 else:
-                    self.error("保存到云盘失败")
+                    self.error(f"保存失败: 0/{unique_douban_ids} (成功/总数)")
         except Exception as e:
             self.error(f"处理内容类型 {content_type} 失败: {str(e)}")
 
@@ -629,34 +662,6 @@ class CloudSaver(_IPluginModule):
                 cloud_type="搜索记录",
                 state='ERROR'
             )
-            return []
-
-    def get_douban_hot_content(self) -> List[Dict]:
-        """获取豆瓣热门内容"""
-        if not self._cloudsaver_sdk or not self._cloudsaver_sdk.enabled:
-            self.warn("CloudSaver未配置或未启用")
-            return []
-
-        if not self._douban_content_types:
-            self.warn("未配置豆瓣内容类型")
-            return []
-
-        try:
-            return self._cloudsaver_sdk.get_douban_hot_content(self._douban_content_types)
-        except Exception as e:
-            self.error(f"获取豆瓣热门内容失败: {str(e)}")
-            return []
-
-    def search_douban_content_in_cloud(self, content_list: List[Dict]) -> List[Dict]:
-        """在云盘中搜索豆瓣内容"""
-        if not self._cloudsaver_sdk or not self._cloudsaver_sdk.enabled:
-            self.warn("CloudSaver未配置或未启用")
-            return []
-
-        try:
-            return self._cloudsaver_sdk.search_douban_content_in_cloud(content_list, self._enabled_cloud_types)
-        except Exception as e:
-            self.error(f"在云盘中搜索豆瓣内容失败: {str(e)}")
             return []
 
     def test_connection(self) -> bool:
@@ -808,6 +813,22 @@ class CloudSaver(_IPluginModule):
     def stop_service(self):
         """停止服务"""
         self._event.set()
+
+    def _get_douban_id(self, result: Dict) -> str:
+        """从豆瓣结果中提取标准ID格式"""
+        return result.get('orgid') or result.get('id', '').replace('DB:', '')
+
+    def _is_resource_saved(self, result: Dict) -> bool:
+        """检查该豆瓣资源是否已成功保存过"""
+        douban_id = self._get_douban_id(result)
+        if not douban_id:
+            return False
+            
+        history = self.get_history(key=douban_id)
+        if not history:
+            return False
+            
+        return history.get('state') == 'SAVED'
 
     def __update_history_with_douban_id(self, douban_id, title, content, cloud_type, state, image=None, cloud_links=None):
         """
