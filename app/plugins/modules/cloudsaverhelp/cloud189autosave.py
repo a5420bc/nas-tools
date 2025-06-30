@@ -247,6 +247,41 @@ class Cloud189AutoSaveSDK(object):
             log.error(f'执行任务失败: {error}')
             return False
     
+    def get_version(self) -> Dict:
+        """获取版本信息"""
+        if not self.enabled:
+            log.error('Cloud189AutoSave 未配置或未启用')
+            return {'success': False, 'error': '未配置'}
+            
+        try:
+            request_utils = RequestUtils(
+                headers=self._get_headers(),
+                timeout=10
+            )
+            
+            response = request_utils.get_res(
+                url=f"{self._base_url}/api/version",
+                raise_exception=False
+            )
+            
+            if not response:
+                log.error('获取版本信息请求失败')
+                return {'success': False, 'error': '请求失败'}
+                
+            if response.status_code != 200:
+                log.error(f'获取版本信息失败，状态码: {response.status_code}')
+                return {'success': False, 'error': f'状态码: {response.status_code}'}
+                
+            try:
+                return response.json()
+            except json.JSONDecodeError:
+                log.error('版本信息响应解析失败')
+                return {'success': False, 'error': '响应解析失败'}
+                
+        except Exception as error:
+            log.error(f'获取版本信息失败: {error}')
+            return {'success': False, 'error': str(error)}
+
     def save_to_cloud(self, share_link: str, task_name: str = None, overwrite: bool = False) -> bool:
         """保存分享链接到云盘（完整流程）
         :param share_link: 分享链接

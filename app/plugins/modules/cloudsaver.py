@@ -6,10 +6,14 @@ from app.plugins.modules._base import _IPluginModule
 from app.plugins.modules.cloudsaverhelp import CloudSaverSDK
 from app.plugins.modules.cloudsaverhelp import MediaFilter
 from app.plugins.modules.cloudsaverhelp.cloud189autosave import Cloud189AutoSaveSDK
+import pytz
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from typing import Dict, List
 from threading import Event
-from datetime import datetime
+from datetime import datetime, timedelta
 from jinja2 import Template
+from config import Config
 import log
 
 # 网盘类型映射
@@ -81,6 +85,9 @@ class CloudSaver(_IPluginModule):
     _baidu_folder_id = ""
     _douban_content_types = []
     _min_douban_rating = 0.0  # 最低豆瓣评分要求
+    _onlyonce = False
+    _cron = ""
+    _scheduler = None
 
     def init_config(self, config: dict = None):
         """初始化配置"""
@@ -88,8 +95,10 @@ class CloudSaver(_IPluginModule):
         self._base_url = config.get("base_url", "")
         self._username = config.get("username", "")
         self._password = config.get("password", "")
+        self._onlyonce = config.get("onlyonce", False)
+        self._cron = config.get("cron", "")
 
-          # 获取启用的网盘类型
+        # 获取启用的网盘类型
         enabled_cloud_types = config.get("enabled_cloud_types", [])
         if isinstance(enabled_cloud_types, list):
                 self._enabled_cloud_types = [
@@ -145,11 +154,51 @@ class CloudSaver(_IPluginModule):
                 "target_folder_id": self._tianyi_folder_id
             })
 
-        self.refresh_rss()
+        # 停止现有任务
+        self.stop_service()
+
+        # 启动服务
+        if self.get_state() or self._onlyonce:
+            self._scheduler = BackgroundScheduler(timezone=Config().get_timezone())
+            if self._cron:
+                self.info(f"云盘保存服务启动，周期：{self._cron}")
+                self._scheduler.add_job(self.__refresh_rss,
+                                      CronTrigger.from_crontab(self._cron))
+            if self._onlyonce:
+                self.info(f"云盘保存服务启动，立即运行一次")
+                self._scheduler.add_job(self.__refresh_rss, 'date',
+                                      run_date=datetime.now(tz=pytz.timezone(Config().get_timezone())) + timedelta(
+                                          seconds=3))
+                # 关闭一次性开关
+                self._onlyonce = False
+                self.update_config({
+                    "onlyonce": False,
+                    "enable": self._enable,
+                    "cron": self._cron,
+                    "base_url": self._base_url,
+                    "username": self._username,
+                    "password": self._password,
+                    "enabled_cloud_types": self._enabled_cloud_types,
+                    "douban_content_types": self._douban_content_types,
+                    "min_douban_rating": self._min_douban_rating,
+                    "quark_folder_id": self._quark_folder_id,
+                    "quark_cookie": self._quark_cookie,
+                    "tianyi_folder_id": self._tianyi_folder_id,
+                    "tianyi_account_id": self._tianyi_account_id,
+                    "tianyi_auto_save_path": self._tianyi_auto_save_path,
+                    "aliyun_folder_id": self._aliyun_folder_id,
+                    "baidu_folder_id": self._baidu_folder_id,
+                    "cloud189_base_url": self._cloud189_sdk.base_url if self._cloud189_sdk else "",
+                    "cloud189_api_key": self._cloud189_sdk.api_key if self._cloud189_sdk else ""
+                })
+            if self._scheduler.get_jobs():
+                # 启动服务
+                self._scheduler.print_jobs()
+                self._scheduler.start()
 
     def get_state(self):
         """获取插件状态"""
-        return self._enable and self._base_url and self._username and self._password
+        return self._enable and self._base_url and self._username and self._password and self._cron and self._douban_content_types
 
     @staticmethod
     def get_fields():
@@ -165,6 +214,29 @@ class CloudSaver(_IPluginModule):
                             'tooltip': '开启后，可以使用CloudSaver进行云盘资源搜索',
                             'type': 'switch',
                             'id': 'enable',
+                        }
+                    ],
+                    [
+                        {
+                            'title': '立即运行一次',
+                            'required': "",
+                            'tooltip': '打开后立即运行一次（点击此对话框的确定按钮后即会运行，周期未设置也会运行），关闭后将仅按照刮削周期运行（同时上次触发运行的任务如果在运行中也会停止）',
+                            'type': 'switch',
+                            'id': 'onlyonce',
+                        }
+                    ],
+                    [
+                        {
+                            'title': '刷新周期',
+                            'required': "required",
+                            'tooltip': '豆瓣内容刷新的时间周期，支持5位cron表达式',
+                            'type': 'text',
+                            'content': [
+                                {
+                                    'id': 'cron',
+                                    'placeholder': '0 0 0 ? *',
+                                }
+                            ]
                         }
                     ],
                     [
@@ -554,7 +626,7 @@ class CloudSaver(_IPluginModule):
         
         return len(saved_ids)
 
-    def refresh_rss(self):
+    def __refresh_rss(self):
         """刷新豆瓣RSS内容"""
         if not self._douban_content_types:
             self.warn("未配置豆瓣内容类型，无法刷新RSS")
@@ -812,7 +884,16 @@ class CloudSaver(_IPluginModule):
 
     def stop_service(self):
         """停止服务"""
-        self._event.set()
+        try:
+            if self._scheduler:
+                self._scheduler.remove_all_jobs()
+                if self._scheduler.running:
+                    self._event.set()
+                    self._scheduler.shutdown()
+                    self._event.clear()
+                self._scheduler = None
+        except Exception as e:
+            print(str(e))
 
     def _get_douban_id(self, result: Dict) -> str:
         """从豆瓣结果中提取标准ID格式"""
