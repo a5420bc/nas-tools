@@ -525,7 +525,7 @@ class CloudSaver(_IPluginModule):
     def filter_by_rating(self, results: List[Dict], min_rating: float) -> List[Dict]:
         """根据评分过滤豆瓣内容"""
         return [res for res in results
-                if not res.get('vote') or float(res.get('vote', 0)) >= min_rating]
+                if float(res.get('vote', 0)) >= min_rating]
 
     def search_cloud_resources(self, douban_results: List[Dict]) -> List[CloudResource]:
         """搜索云盘资源并添加豆瓣ID"""
