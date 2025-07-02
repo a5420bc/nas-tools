@@ -50,7 +50,7 @@ class CloudSaver(_IPluginModule):
     # 插件描述
     module_desc = "使用CloudSaver进行资源搜索，自动保存豆瓣热门影视到云盘。"
     # 插件图标
-    module_icon = "cloud.jpg"
+    module_icon = "cloudsaver.png"
     # 主题色
     module_color = "#4CAF50"
     # 插件版本
@@ -101,15 +101,15 @@ class CloudSaver(_IPluginModule):
         # 获取启用的网盘类型
         enabled_cloud_types = config.get("enabled_cloud_types", [])
         if isinstance(enabled_cloud_types, list):
-                self._enabled_cloud_types = [
-                    int(ct) for ct in enabled_cloud_types if str(ct).isdigit()]
+            self._enabled_cloud_types = [
+                int(ct) for ct in enabled_cloud_types if str(ct).isdigit()]
         else:
             self._enabled_cloud_types = [1]  # 默认只启用天翼云盘
 
         # 天翼云盘配置
         self._tianyi_account_id = config.get("tianyi_account_id", "")
         self._tianyi_auto_save_path = config.get("tianyi_auto_save_path", "")
-        
+
         # 初始化天翼云盘SDK
         self._douban_content_types = config.get(
             "douban_content_types", [])
@@ -159,16 +159,17 @@ class CloudSaver(_IPluginModule):
 
         # 启动服务
         if self.get_state() or self._onlyonce:
-            self._scheduler = BackgroundScheduler(timezone=Config().get_timezone())
+            self._scheduler = BackgroundScheduler(
+                timezone=Config().get_timezone())
             if self._cron:
                 self.info(f"云盘保存服务启动，周期：{self._cron}")
                 self._scheduler.add_job(self.__refresh_rss,
-                                      CronTrigger.from_crontab(self._cron))
+                                        CronTrigger.from_crontab(self._cron))
             if self._onlyonce:
                 self.info(f"云盘保存服务启动，立即运行一次")
                 self._scheduler.add_job(self.__refresh_rss, 'date',
-                                      run_date=datetime.now(tz=pytz.timezone(Config().get_timezone())) + timedelta(
-                                          seconds=3))
+                                        run_date=datetime.now(tz=pytz.timezone(Config().get_timezone())) + timedelta(
+                                            seconds=3))
                 # 关闭一次性开关
                 self._onlyonce = False
                 self.update_config({
@@ -178,7 +179,7 @@ class CloudSaver(_IPluginModule):
                     "base_url": self._base_url,
                     "username": self._username,
                     "password": self._password,
-                    "enabled_cloud_types": self._enabled_cloud_types,
+                    "enabled_cloud_types": config.get("enabled_cloud_types", []),
                     "douban_content_types": self._douban_content_types,
                     "min_douban_rating": self._min_douban_rating,
                     "quark_folder_id": self._quark_folder_id,
@@ -188,8 +189,8 @@ class CloudSaver(_IPluginModule):
                     "tianyi_auto_save_path": self._tianyi_auto_save_path,
                     "aliyun_folder_id": self._aliyun_folder_id,
                     "baidu_folder_id": self._baidu_folder_id,
-                    "cloud189_base_url": self._cloud189_sdk.base_url if self._cloud189_sdk else "",
-                    "cloud189_api_key": self._cloud189_sdk.api_key if self._cloud189_sdk else ""
+                    "cloud189_base_url": config.get("cloud189_base_url", ""),
+                    "cloud189_api_key": config.get("cloud189_api_key", "")
                 })
             if self._scheduler.get_jobs():
                 # 启动服务
@@ -518,13 +519,13 @@ class CloudSaver(_IPluginModule):
 
         results = method()
         self.info(f"获取豆瓣内容 {content_type} 成功，共 {len(results)} 条")
-        
+
         return results
 
     def filter_by_rating(self, results: List[Dict], min_rating: float) -> List[Dict]:
         """根据评分过滤豆瓣内容"""
         return [res for res in results
-               if not res.get('vote') or float(res.get('vote', 0)) >= min_rating]
+                if not res.get('vote') or float(res.get('vote', 0)) >= min_rating]
 
     def search_cloud_resources(self, douban_results: List[Dict]) -> List[CloudResource]:
         """搜索云盘资源并添加豆瓣ID"""
@@ -535,8 +536,9 @@ class CloudSaver(_IPluginModule):
         cloud_resources = []
         for result in douban_results:
             title = result.get('title', '')
-            douban_id = result.get('orgid') or result.get('id', '').replace('DB:', '')
-            
+            douban_id = result.get('orgid') or result.get(
+                'id', '').replace('DB:', '')
+
             if not title or not douban_id:
                 self.warn(f"跳过无效的豆瓣结果 - 标题:{title}, ID:{douban_id}")
                 continue
@@ -548,15 +550,16 @@ class CloudSaver(_IPluginModule):
                 if not resources:
                     self.info(f"未找到标题为'{title}'的云盘资源")
                     continue
-                    
+
                 self.info(f"找到 {len(resources)} 条云盘资源")
                 # 使用MediaFilter过滤资源
                 media_filter = MediaFilter()
-                filtered_resources = media_filter.filter_media(result, resources)
+                filtered_resources = media_filter.filter_media(
+                    result, resources)
                 if not filtered_resources:
                     self.info("经过MediaFilter过滤后无匹配资源")
                     continue
-                    
+
                 self.info(f"过滤后剩余 {len(filtered_resources)} 条匹配资源")
                 # 为每个资源添加豆瓣ID
                 for res in filtered_resources:
@@ -566,26 +569,28 @@ class CloudSaver(_IPluginModule):
                 self.error(f"搜索云盘资源失败: {str(e)}")
                 import traceback
                 self.debug(f"错误详情:\n{traceback.format_exc()}")
-        
+
         return cloud_resources
+
     def save_to_cloud(self, resources: List[CloudResource]) -> int:
         """保存资源到云盘(按豆瓣ID分组转存)，返回成功保存的豆瓣ID数量"""
         if not resources:
             return 0
-    
+
         self.info(f"开始保存资源到云盘，共 {len(resources)} 条资源")
-        unique_douban_ids = len({r.get('doubanId') for r in resources if r.get('doubanId')})
+        unique_douban_ids = len({r.get('doubanId')
+                                for r in resources if r.get('doubanId')})
         self.info(f"共 {unique_douban_ids} 个豆瓣资源需要处理")
-    
+
         saved_ids = set()  # 记录已成功转存的豆瓣ID
-    
+
         for resource in resources:
             try:
                 # 获取豆瓣ID
                 douban_id = resource.get('doubanId')
                 if not douban_id or douban_id in saved_ids:
                     continue
-    
+
                 # 直接按照字典结构处理
                 if resource["cloudType"] == "tianyi" and self._cloud189_sdk:
                     share_link = resource["cloudLinks"][0]["link"]
@@ -623,7 +628,7 @@ class CloudSaver(_IPluginModule):
                     state='ERROR',
                     cloud_links=resource.get('cloudLinks', [])
                 )
-        
+
         return len(saved_ids)
 
     def __refresh_rss(self):
@@ -635,7 +640,7 @@ class CloudSaver(_IPluginModule):
         try:
             for content_type in self._douban_content_types:
                 self.info(f"开始处理内容类型: {content_type}")
-                
+
                 # 1. 获取豆瓣内容
                 douban_results = self.get_douban_content(content_type)
                 if not douban_results:
@@ -644,7 +649,8 @@ class CloudSaver(_IPluginModule):
                 self.info(f"获取到 {len(douban_results)} 条豆瓣内容")
 
                 # 2. 过滤评分
-                filtered_results = self.filter_by_rating(douban_results, self._min_douban_rating)
+                filtered_results = self.filter_by_rating(
+                    douban_results, self._min_douban_rating)
                 if not filtered_results:
                     self.info("没有满足评分要求的内容")
                     continue
@@ -653,12 +659,12 @@ class CloudSaver(_IPluginModule):
                 # 3. 过滤并搜索云盘资源
                 # 先过滤掉已保存的资源
                 filtered_results = [res for res in filtered_results
-                                 if not self._is_resource_saved(res)]
-                
+                                    if not self._is_resource_saved(res)]
+
                 if not filtered_results:
                     self.info("所有资源已保存过，跳过搜索和保存")
                     continue
-                    
+
                 cloud_resources = self.search_cloud_resources(filtered_results)
                 if not cloud_resources:
                     self.info("未找到匹配的云盘资源")
@@ -667,9 +673,11 @@ class CloudSaver(_IPluginModule):
 
                 # 4. 保存到云盘
                 saved_count = self.save_to_cloud(cloud_resources)
-                unique_douban_ids = len({r.get('doubanId') for r in cloud_resources if r.get('doubanId')})
+                unique_douban_ids = len(
+                    {r.get('doubanId') for r in cloud_resources if r.get('doubanId')})
                 if saved_count > 0:
-                    self.info(f"成功保存: {saved_count}/{unique_douban_ids} (成功/总数)")
+                    self.info(
+                        f"成功保存: {saved_count}/{unique_douban_ids} (成功/总数)")
                 else:
                     self.error(f"保存失败: 0/{unique_douban_ids} (成功/总数)")
         except Exception as e:
@@ -835,6 +843,7 @@ class CloudSaver(_IPluginModule):
         return "搜索历史", Template(template).render(HistoryCount=len(results),
                                                  CloudSaverHistory=results), None
 
+
     @staticmethod
     def get_script():
         """
@@ -846,7 +855,36 @@ class CloudSaver(_IPluginModule):
             ajax_post("run_plugin_method", {"plugin_id": 'CloudSaver', 'method': 'delete_search_history', 'history_id': id}, function (ret) {
               $("#cloudsaver_history_" + id).remove();
             });
-
+          }
+          
+          // 批量删除CloudSaver搜索历史记录
+          function CloudSaver_batch_delete(){
+            let ids = [];
+            $(".cloudsaver-checkbox:checked").each(function(){
+              ids.push($(this).val());
+            });
+            if (ids.length === 0) {
+              alert("请选择要删除的记录");
+              return;
+            }
+            if (confirm(`确定要删除选中的${ids.length}条记录吗？`)) {
+              ajax_post("run_plugin_method", {"plugin_id": 'CloudSaver', 'method': 'batch_delete_history', 'history_ids': ids}, function (ret) {
+                location.reload();
+              });
+            }
+          }
+          
+          // 分页加载
+          function CloudSaver_load_page(page){
+            ajax_post("run_plugin_method", {
+              "plugin_id": 'CloudSaver',
+              "method": 'get_history_page',
+              "page": page,
+              "count": 10
+            }, function (ret) {
+              $("#cloudsaver_history_list").html(ret.html);
+              $("#cloudsaver_pagination").html(ret.pagination);
+            });
           }
         """
 
@@ -904,11 +942,11 @@ class CloudSaver(_IPluginModule):
         douban_id = self._get_douban_id(result)
         if not douban_id:
             return False
-            
+
         history = self.get_history(key=douban_id)
         if not history:
             return False
-            
+
         return history.get('state') == 'SAVED'
 
     def __update_history_with_douban_id(self, douban_id, title, content, cloud_type, state, image=None, cloud_links=None):
