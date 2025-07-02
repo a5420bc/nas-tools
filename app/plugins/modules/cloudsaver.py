@@ -755,17 +755,61 @@ class CloudSaver(_IPluginModule):
             self.error(f"连接测试失败: {str(e)}")
             return False
 
-    def get_page(self):
+    def get_page(self, page=1, count=5):
         """
         插件的额外页面，返回页面标题和页面内容
+        :param page: 当前页码
+        :param count: 每页数量
         :return: 标题，页面内容，确定按钮响应函数
         """
-        results = self.get_history()
+        results = self.get_history(page=page, num=count)
+        total = self.get_history_count()
+        page_count = (total + count - 1) // count
         template = """
              <div class="table-responsive table-modal-body">
+               <div class="d-flex justify-content-between mb-2">
+                 <button class="btn btn-danger btn-sm" onclick="CloudSaver_batch_delete()">
+                   <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-trash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                     <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+                     <path d="M4 7l16 0"></path>
+                     <path d="M10 11l0 6"></path>
+                     <path d="M14 11l0 6"></path>
+                     <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"></path>
+                     <path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"></path>
+                   </svg>
+                   批量删除
+                 </button>
+                 <div id="cloudsaver_pagination">
+                   <ul class="pagination pagination-sm">
+                     {% if page > 1 %}
+                     <li class="page-item">
+                       <a class="page-link" href="javascript:CloudSaver_load_page({{page-1}})">
+                         &laquo;
+                       </a>
+                     </li>
+                     {% endif %}
+                     {% for p in range(1, page_count+1) %}
+                     <li class="page-item {% if p == page %}active{% endif %}">
+                       <a class="page-link" href="javascript:CloudSaver_load_page({{p}})">{{p}}</a>
+                     </li>
+                     {% endfor %}
+                     {% if page < page_count %}
+                     <li class="page-item">
+                       <a class="page-link" href="javascript:CloudSaver_load_page({{page+1}})">
+                         &raquo;
+                       </a>
+                     </li>
+                     {% endif %}
+                   </ul>
+                 </div>
+               </div>
                <table class="table table-vcenter card-table table-hover table-striped">
                  <thead>
                  <tr>
+                   <th class="w-1">
+                     <input class="form-check-input m-0 align-middle" type="checkbox"
+                            onclick="$(this).parents('table').find('.cloudsaver-checkbox').prop('checked', $(this).prop('checked'))">
+                   </th>
                    <th></th>
                    <th>标题</th>
                    <th>网盘类型</th>
@@ -778,6 +822,10 @@ class CloudSaver(_IPluginModule):
                  {% if HistoryCount > 0 %}
                    {% for Item in CloudSaverHistory %}
                      <tr id="cloudsaver_history_{{ Item.id }}">
+                       <td>
+                         <input class="form-check-input m-0 align-middle cloudsaver-checkbox"
+                                type="checkbox" value="{{ Item.id }}">
+                       </td>
                        <td class="w-5">
                          <img class="rounded w-5" src="{{ Item.image }}"
                               onerror="this.src='../static/img/no-image.png'" alt=""
@@ -840,9 +888,24 @@ class CloudSaver(_IPluginModule):
                </table>
              </div>
            """
-        return "搜索历史", Template(template).render(HistoryCount=len(results),
-                                                 CloudSaverHistory=results), None
+        return "搜索历史", Template(template).render(
+            HistoryCount=len(results),
+            CloudSaverHistory=results,
+            page=page,
+            page_count=page_count
+        ), None
 
+    def get_history_page(self, page=1, count=10):
+        """
+        获取分页历史记录页面
+        :param page: 当前页码
+        :param count: 每页数量
+        :return: 包含html和分页控件的字典
+        """
+        _, content, _ = self.get_page(page=page, count=count)
+        return {
+            "html": content,
+        }
 
     @staticmethod
     def get_script():
@@ -869,7 +932,7 @@ class CloudSaver(_IPluginModule):
             }
             if (confirm(`确定要删除选中的${ids.length}条记录吗？`)) {
               ajax_post("run_plugin_method", {"plugin_id": 'CloudSaver', 'method': 'batch_delete_history', 'history_ids': ids}, function (ret) {
-                location.reload();
+                CloudSaver_load_page(1);
               });
             }
           }
@@ -880,10 +943,9 @@ class CloudSaver(_IPluginModule):
               "plugin_id": 'CloudSaver',
               "method": 'get_history_page',
               "page": page,
-              "count": 10
+              "count": 5 
             }, function (ret) {
-              $("#cloudsaver_history_list").html(ret.html);
-              $("#cloudsaver_pagination").html(ret.pagination);
+              $("#plugin_page_content").html(ret.result.html);
             });
           }
         """
@@ -893,6 +955,18 @@ class CloudSaver(_IPluginModule):
         删除搜索历史
         """
         return self.delete_history(key=history_id)
+
+    def batch_delete_history(self, history_ids):
+        """
+        批量删除搜索历史
+        :param history_ids: 要删除的历史记录ID列表
+        :return: 删除成功的数量
+        """
+        success_count = 0
+        for history_id in history_ids:
+            if self.delete_search_history(history_id):
+                success_count += 1
+        return success_count
 
     def __update_history(self, title, content, cloud_type, state, cloud_links=None):
         """
