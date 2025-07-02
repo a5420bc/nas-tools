@@ -594,7 +594,14 @@ class CloudSaver(_IPluginModule):
                 # 直接按照字典结构处理
                 if resource["cloudType"] == "tianyi" and self._cloud189_sdk:
                     share_link = resource["cloudLinks"][0]["link"]
-                    if self._cloud189_sdk.save_to_cloud(share_link, resource['title']):
+                    # 调用cloud189保存方法
+                    if self._cloud189_sdk:
+                        self._cloud189_sdk.save_to_cloud(share_link, resource['title'])
+                    # 调用cloudsdk保存方法
+                    if self._cloudsaver_sdk:
+                        self._cloudsaver_sdk.save_to_cloud(share_link, folder_id=self._tianyi_folder_id)
+                    # 标记为保存成功
+                    if self._cloud189_sdk or self._cloudsaver_sdk:
                         saved_ids.add(douban_id)
                         self.info(f"成功保存豆瓣ID {douban_id} 的资源")
                         # 记录成功转存历史
