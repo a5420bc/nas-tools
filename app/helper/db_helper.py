@@ -2676,17 +2676,42 @@ class DbHelper:
             DATE=time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
         ))
 
-    def get_plugin_history(self, plugin_id, key):
+    def get_plugin_history_count(self, plugin_id=None):
         """
-        查询插件运行记录
+        转移历史记录总条数
+        """
+        return self._db.query(PLUGINHISTORY).filter(PLUGINHISTORY.PLUGIN_ID==plugin_id).count()
+
+    def get_plugin_history(self, plugin_id=None, key=None, num=None, page=None, order_by="DATE", order_desc=True):
+        """
+        查询插件运行历史
+        :param plugin_id: 插件ID
+        :param key: 键名
+        :param num: 每页数量
+        :param page: 页码
+        :param order_by: 排序字段
+        :param order_desc: 是否降序
         """
         if not plugin_id:
             return None
+        query = self._db.query(PLUGINHISTORY)
         if key:
-            return self._db.query(PLUGINHISTORY).filter(PLUGINHISTORY.PLUGIN_ID == plugin_id,
+            return query.filter(PLUGINHISTORY.PLUGIN_ID == plugin_id,
                                                         PLUGINHISTORY.KEY == key).first()
         else:
-            return self._db.query(PLUGINHISTORY).filter(PLUGINHISTORY.PLUGIN_ID == plugin_id).all()
+            query = query.filter(PLUGINHISTORY.PLUGIN_ID == plugin_id)
+            order_field = getattr(PLUGINHISTORY, order_by, PLUGINHISTORY.DATE)
+            if order_desc:
+                query = query.order_by(order_field.desc())
+            else:
+                query = query.order_by(order_field.asc())
+                
+            # 分页处理
+            if num and page:
+                offset = (int(page) - 1) * int(num)
+                return query.limit(num).offset(offset).all()
+            return query.all()
+
 
     @DbPersist(_db)
     def update_plugin_history(self, plugin_id, key, value):
@@ -2707,3 +2732,10 @@ class DbHelper:
         """
         self._db.query(PLUGINHISTORY).filter(PLUGINHISTORY.PLUGIN_ID == plugin_id,
                                              PLUGINHISTORY.KEY == key).delete()
+
+    @DbPersist(_db)
+    def clear_history(self, plugin_id):
+        """
+        清理插件记录
+        """
+        self._db.query(PLUGINHISTORY).filter(PLUGINHISTORY.PLUGIN_ID == plugin_id).delete()

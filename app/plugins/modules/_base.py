@@ -134,14 +134,15 @@ class _IPluginModule(metaclass=ABCMeta):
                                          key=key,
                                          value=value)
 
-    def get_history(self, key=None, plugin_id=None):
+    def get_history(self, key=None, plugin_id=None, num=None, page=None, order_by="DATE", order_desc=True):
         """
         获取插件运行数据，只返回一条，自动识别转换为对象
         """
         if not plugin_id:
             plugin_id = self.__class__.__name__
 
-        historys = DbHelper().get_plugin_history(plugin_id=plugin_id, key=key)
+        historys = DbHelper().get_plugin_history(plugin_id=plugin_id, key=key, num=num,
+                                                 page=page, order_by=order_by, order_desc=order_desc)
         if not isinstance(historys, list):
             historys = [historys]
         result = []
@@ -162,6 +163,11 @@ class _IPluginModule(metaclass=ABCMeta):
             else:
                 result.append(history.VALUE)
         return None if key else result
+
+    def get_history_count(self, plugin_id=None):
+        if not plugin_id:
+            plugin_id = self.__class__.__name__
+        return DbHelper().get_plugin_history_count(plugin_id=plugin_id)
 
     def update_history(self, key, value, plugin_id=None):
         """
@@ -184,6 +190,11 @@ class _IPluginModule(metaclass=ABCMeta):
         if not plugin_id:
             plugin_id = self.__class__.__name__
         return DbHelper().delete_plugin_history(plugin_id=plugin_id, key=key)
+
+    def clear_history(self, plugin_id=None):
+        if not plugin_id:
+            plugin_id = self.__class__.__name__
+        return DbHelper().clear_history(plugin_id=plugin_id)
 
     @staticmethod
     def send_message(title, text=None, image=None):

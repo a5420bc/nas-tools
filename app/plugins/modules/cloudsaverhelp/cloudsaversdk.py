@@ -207,6 +207,114 @@ class CloudSaverSDK:
 
         return False
 
+    def _request_with_retry(self, method, url, **kwargs):
+        """带重试和自动登录的请求方法"""
+        retries = 0
+        while retries < self._max_retries:
+            try:
+                # 添加token到请求头
+                headers = {}
+                headers['Authorization'] = f'Bearer {self._token}'
+
+                request_utils = RequestUtils(
+                    headers=headers,
+                    content_type='application/json',
+                    timeout=3
+                )
+
+                if method.lower() == 'get':
+                    response = request_utils.get_res(url, **kwargs)
+                else:
+                    response = request_utils.post_res(url, **kwargs)
+
+                if response is None:
+                    log.error(f'请求失败: {url}')
+                    retries += 1
+                    self._delay(self._retry_delay)
+                    continue
+
+                if response.status_code == 401:
+                    log.warn('Token已过期，尝试重新登录...')
+                    if not self._auto_login():
+                        log.error('重新登录失败')
+                        retries += 1
+                        self._delay(self._retry_delay)
+                        continue
+                    # 使用新token重试
+                    continue
+
+                if response.status_code != 200:
+                    log.error(f'请求失败，状态码: {response.status_code}')
+                    retries += 1
+                    self._delay(self._retry_delay)
+                    continue
+
+                return response
+
+            except Exception as error:
+                log.error(f'请求异常: {error}')
+                retries += 1
+                self._delay(self._retry_delay)
+
+        raise Exception(f'请求失败，重试次数已达上限: {url}')
+
+    def _parse_share_link(self, share_url: str) -> dict:
+        """
+        解析天翼云盘分享链接，支持三种情况，返回shareCode、receiveCode
+        1. https://cloud.189.cn/t/NrQRfqMbMZ7b（访问码：2duw）
+        2. https://cloud.189.cn/t/NrQRfqMbMZ7b
+        3. https://cloud.189.cn/web/share?code=7Zzay2BzmUFv（访问码：epm1） 或 https://cloud.189.cn/web/share?code=7Zzay2BzmUFv
+        """
+        import re
+        # 提取 fullcode
+        fullcode = None
+        if share_url.startswith('http'):
+            # /t/xxx
+            t_match = re.search(r'/t/(\w+)', share_url)
+            if t_match:
+                fullcode = t_match.group(1)
+            else:
+                # /web/share?code=xxx
+                code_match = re.search(r'[?&]code=([\w-]+)', share_url)
+                if code_match:
+                    fullcode = code_match.group(1)
+
+        if not fullcode:
+            raise ValueError(f"分享链接格式不正确，无法解析出 fullcode。原始链接为{share_url}")
+
+        # 返回结构
+        return {
+            "access_code": fullcode,
+            "shareCode": fullcode,
+        }
+
+    def _get_share_info(self, share_url: str, receive_code: str = None) -> dict:
+        """获取分享链接信息(内部方法)"""
+        try:
+            linkInfo = self._parse_share_link(share_url)
+            # 构造请求参数
+            params = {
+                'shareCode': linkInfo.get("shareCode"),
+                'receiveCode': linkInfo.get("receiveCode")
+            }
+
+            # 发送请求
+            response = self._request_with_retry(
+                'get',
+                f"{self._base_url}/api/tianyi/share-info",
+                params=params
+            )
+
+            data = response.json()
+            if not data.get('success'):
+                raise Exception(data.get('message', '获取分享信息失败'))
+
+            return data.get('data', {})
+
+        except Exception as error:
+            log.error(f'获取分享信息失败: {error}')
+            raise
+
     def search(self, keyword: str, cloud_types: List[int] = None) -> List[CloudResource]:
         """搜索云盘资源
 
@@ -242,10 +350,9 @@ class CloudSaverSDK:
                 raise_exception=False
             )
 
-
             # 记录响应状态
             log.debug(f"API 响应状态码: {response.status_code}")
-            if not response:
+            if response is None:
                 raise Exception('搜索请求失败')
 
             # 处理401未授权的情况
@@ -276,7 +383,8 @@ class CloudSaverSDK:
                 filtered_resources = []
                 for resource in resources:
                     cloud_links = resource.get('cloudLinks', [])
-                    log.debug(f"处理资源: {resource.get('title', '未知标题')}, 链接数: {len(cloud_links)}")
+                    log.debug(
+                        f"处理资源: {resource.get('title', '未知标题')}, 链接数: {len(cloud_links)}")
                     if cloud_links:
                         # 检查是否有符合条件的链接
                         valid_links = []
@@ -342,10 +450,11 @@ class CloudSaverSDK:
 
                 log.info(
                     f'CloudSaverSDK 搜索完成，找到 {len(final_result)} 个资源，分布: {type_stats}')
-                
+
                 # 记录找到的资源标题
                 if final_result:
-                    titles = [res.get('title', '未知标题') for res in final_result[:5]]
+                    titles = [res.get('title', '未知标题')
+                              for res in final_result[:5]]
                     if len(final_result) > 5:
                         titles.append(f"...等共{len(final_result)}个资源")
                     log.debug(f"找到的资源: {', '.join(titles)}")
@@ -365,3 +474,68 @@ class CloudSaverSDK:
         """设置token"""
         self._token = token
         self._save_token()
+
+    def save_to_cloud(self, share_url_or_code: str, receive_code: str = None, folder_id: str = None) -> bool:
+        """
+        保存资源到云盘
+        :param share_url_or_code: 分享链接或分享码
+        :param receive_code: 可选接收码
+        :param folder_id: 目标文件夹ID
+        :return: 是否保存成功
+        """
+        if not self._token:
+            login_success = self._auto_login()
+            if not login_success:
+                raise Exception('CloudSaverSDK 自动登录失败，请检查账号密码是否正确')
+
+        try:
+            # 获取分享信息
+            share_info = self._get_share_info(share_url_or_code, receive_code)
+            if not share_info:
+                raise Exception('获取分享信息为空')
+
+            linkInfo = self._parse_share_link(share_url_or_code)
+
+            print(share_info)
+
+            # 准备保存请求数据
+            save_data = {
+                'shareInfoList': share_info.get('list', []),
+                'shareId': share_info.get('shareId', ''),
+                'fileId': share_info.get('list', [{}])[0].get('fileId', ''),
+                'isFolder': share_info.get('isFolder', False),
+                'fids': [item.get('fileId') for item in share_info.get('list', []) if item.get('fileId')],
+                'shareCode': linkInfo.get("shareCode"),
+                'receiveCode': linkInfo.get("receiveCode")
+            }
+            if folder_id:
+                save_data['folderId'] = folder_id
+
+            print(save_data)
+
+            request_utils = RequestUtils(
+                headers={
+                    'Authorization': f'Bearer {self._token}',
+                    'Content-Type': 'application/json'
+                },
+                timeout=30
+            )
+
+            response = request_utils.post_res(
+                url=f"{self._base_url}/api/tianyi/save",
+                json=save_data
+            )
+
+            if not response or response.status_code != 200:
+                raise Exception(
+                    f'保存到云盘失败，状态码: {response.status_code if response else "无响应"}')
+
+            data = response.json()
+            if not data.get('success'):
+                raise Exception(f'保存到云盘失败: {data.get("message")}')
+
+            return True
+
+        except Exception as e:
+            log.error(f'保存到云盘异常: {str(e)}')
+            raise
