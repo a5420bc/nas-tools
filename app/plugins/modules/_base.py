@@ -191,6 +191,11 @@ class _IPluginModule(metaclass=ABCMeta):
             plugin_id = self.__class__.__name__
         return DbHelper().delete_plugin_history(plugin_id=plugin_id, key=key)
 
+    def clear_history(self, plugin_id=None):
+        if not plugin_id:
+            plugin_id = self.__class__.__name__
+        return DbHelper().clear_history(plugin_id=plugin_id)
+
     @staticmethod
     def send_message(title, text=None, image=None):
         """

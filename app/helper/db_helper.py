@@ -2732,3 +2732,10 @@ class DbHelper:
         """
         self._db.query(PLUGINHISTORY).filter(PLUGINHISTORY.PLUGIN_ID == plugin_id,
                                              PLUGINHISTORY.KEY == key).delete()
+
+    @DbPersist(_db)
+    def clear_history(self, plugin_id):
+        """
+        清理插件记录
+        """
+        self._db.query(PLUGINHISTORY).filter(PLUGINHISTORY.PLUGIN_ID == plugin_id).delete()

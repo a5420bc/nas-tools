@@ -259,23 +259,33 @@ class CloudSaverSDK:
         raise Exception(f'请求失败，重试次数已达上限: {url}')
 
     def _parse_share_link(self, share_url: str) -> dict:
-        """解析分享链接，返回完整的shareCode和receiveCode字符串"""
+        """
+        解析天翼云盘分享链接，支持三种情况，返回shareCode、receiveCode
+        1. https://cloud.189.cn/t/NrQRfqMbMZ7b（访问码：2duw）
+        2. https://cloud.189.cn/t/NrQRfqMbMZ7b
+        3. https://cloud.189.cn/web/share?code=7Zzay2BzmUFv（访问码：epm1） 或 https://cloud.189.cn/web/share?code=7Zzay2BzmUFv
+        """
         import re
+        # 提取 fullcode
+        fullcode = None
         if share_url.startswith('http'):
-            # 从URL中提取完整code参数值
-            match = re.search(r'[?&]code=([^&]+)', share_url)
-            if not match:
-                raise ValueError("分享链接格式不正确，无法解析出分享码")
-            full_code = match.group(1)
-        else:
-            # 直接使用输入的分享码
-            full_code = share_url
+            # /t/xxx
+            t_match = re.search(r'/t/(\w+)', share_url)
+            if t_match:
+                fullcode = t_match.group(1)
+            else:
+                # /web/share?code=xxx
+                code_match = re.search(r'[?&]code=([\w-]+)', share_url)
+                if code_match:
+                    fullcode = code_match.group(1)
 
-        if not full_code:
-            raise Exception('无法解析分享码')
+        if not fullcode:
+            raise ValueError(f"分享链接格式不正确，无法解析出 fullcode。原始链接为{share_url}")
+
+        # 返回结构
         return {
-            "shareCode": full_code,
-            "receiveCode": full_code
+            "access_code": fullcode,
+            "shareCode": fullcode,
         }
 
     def _get_share_info(self, share_url: str, receive_code: str = None) -> dict:

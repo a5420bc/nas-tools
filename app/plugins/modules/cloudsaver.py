@@ -564,6 +564,8 @@ class CloudSaver(_IPluginModule):
                 # 为每个资源添加豆瓣ID
                 for res in filtered_resources:
                     res['doubanId'] = douban_id
+                    res['image'] = result.get(
+                        'image') or "../static/img/no-image.png"
                 cloud_resources.extend(filtered_resources)
             except Exception as e:
                 self.error(f"搜索云盘资源失败: {str(e)}")
@@ -596,10 +598,12 @@ class CloudSaver(_IPluginModule):
                     share_link = resource["cloudLinks"][0]["link"]
                     # 调用cloud189保存方法
                     if self._cloud189_sdk:
-                        self._cloud189_sdk.save_to_cloud(share_link, resource['title'])
+                        self._cloud189_sdk.save_to_cloud(
+                            share_link, resource['title'])
                     # 调用cloudsdk保存方法
                     if self._cloudsaver_sdk:
-                        self._cloudsaver_sdk.save_to_cloud(share_link, folder_id=self._tianyi_folder_id)
+                        self._cloudsaver_sdk.save_to_cloud(
+                            share_link, folder_id=self._tianyi_folder_id)
                     # 标记为保存成功
                     if self._cloud189_sdk or self._cloudsaver_sdk:
                         saved_ids.add(douban_id)
@@ -611,6 +615,8 @@ class CloudSaver(_IPluginModule):
                             content=f"已成功保存到{resource['cloudType']}云盘",
                             cloud_type=resource['cloudType'],
                             state='SAVED',
+                            image=resource.get(
+                                'image', '../static/img/no-image.png'),
                             cloud_links=resource['cloudLinks']
                         )
                     else:
@@ -621,6 +627,8 @@ class CloudSaver(_IPluginModule):
                             content=f"保存到{resource['cloudType']}云盘失败",
                             cloud_type=resource['cloudType'],
                             state='ERROR',
+                            image=resource.get(
+                                'image', '../static/img/no-image.png'),
                             cloud_links=resource['cloudLinks']
                         )
                 # 可以添加其他云盘类型的处理
@@ -632,6 +640,7 @@ class CloudSaver(_IPluginModule):
                     title=resource.get('title', '未知标题'),
                     content=f"保存失败: {str(e)}",
                     cloud_type=resource.get('cloudType', '未知'),
+                    image=resource.get('image', '../static/img/no-image.png'),
                     state='ERROR',
                     cloud_links=resource.get('cloudLinks', [])
                 )
@@ -663,22 +672,24 @@ class CloudSaver(_IPluginModule):
                     continue
                 self.info(f"过滤后剩余 {len(filtered_results)} 条满足评分要求的内容")
 
-                # 3. 过滤并搜索云盘资源
-                # 先过滤掉已保存的资源
+                # 3. 先过滤掉已保存的资源
                 filtered_results = [res for res in filtered_results
                                     if not self._is_resource_saved(res)]
+
+                self.info(f"过滤掉已经保存的资源后，共有{len(filtered_results)}条资源需要处理")
 
                 if not filtered_results:
                     self.info("所有资源已保存过，跳过搜索和保存")
                     continue
 
+                # 4. 过滤并搜索云盘资源
                 cloud_resources = self.search_cloud_resources(filtered_results)
                 if not cloud_resources:
                     self.info("未找到匹配的云盘资源")
                     continue
                 self.info(f"找到 {len(cloud_resources)} 条新资源")
 
-                # 4. 保存到云盘
+                # 5. 保存到云盘
                 saved_count = self.save_to_cloud(cloud_resources)
                 unique_douban_ids = len(
                     {r.get('doubanId') for r in cloud_resources if r.get('doubanId')})
@@ -689,78 +700,6 @@ class CloudSaver(_IPluginModule):
                     self.error(f"保存失败: 0/{unique_douban_ids} (成功/总数)")
         except Exception as e:
             self.error(f"处理内容类型 {content_type} 失败: {str(e)}")
-
-    def search_resources(self, keyword: str) -> List[CloudResource]:
-        """搜索云盘资源"""
-        if not self._cloudsaver_sdk or not self._cloudsaver_sdk.enabled:
-            self.warn("CloudSaver未配置或未启用")
-            return []
-
-        try:
-            results = self._cloudsaver_sdk.search(
-                keyword, self._enabled_cloud_types)
-
-            # 记录搜索历史
-            if results:
-                for result in results:
-                    cloud_type_name = CLOUD_TYPE_MAP.get(
-                        result.get('cloudType'), '未知')
-
-                    # 尝试从结果中获取豆瓣ID
-                    douban_id = result.get('doubanId') or result.get('id')
-
-                    if douban_id:
-                        # 使用豆瓣ID作为key记录搜索历史
-                        self.__update_history_with_douban_id(
-                            douban_id=douban_id,
-                            title=result.get('title', keyword),
-                            content=result.get('content', ''),
-                            cloud_type=cloud_type_name,
-                            state='FOUND',
-                            cloud_links=result.get('cloudLinks', [])
-                        )
-                        self.info(
-                            f"已保存到历史记录: {result.get('title', keyword)}，ID: {douban_id}")
-                    else:
-                        # 如果没有豆瓣ID，使用旧的方法记录历史
-                        self.__update_history(
-                            title=result.get('title', keyword),
-                            content=result.get('content', ''),
-                            cloud_type=cloud_type_name,
-                            state='FOUND',
-                            cloud_links=result.get('cloudLinks', [])
-                        )
-            else:
-                # 即使没找到结果也记录搜索历史
-                self.__update_history(
-                    title=keyword,
-                    content=f"搜索关键词: {keyword}",
-                    cloud_type="搜索记录",
-                    state='NEW'
-                )
-
-            return results
-        except Exception as e:
-            self.error(f"搜索失败: {str(e)}")
-            # 记录搜索失败的历史
-            self.__update_history(
-                title=keyword,
-                content=f"搜索失败: {str(e)}",
-                cloud_type="搜索记录",
-                state='ERROR'
-            )
-            return []
-
-    def test_connection(self) -> bool:
-        """测试连接"""
-        if not self._cloudsaver_sdk or not self._cloudsaver_sdk.enabled:
-            return False
-
-        try:
-            return self._cloudsaver_sdk.login()
-        except Exception as e:
-            self.error(f"连接测试失败: {str(e)}")
-            return False
 
     def get_page(self, page=1, count=5):
         """
@@ -775,17 +714,27 @@ class CloudSaver(_IPluginModule):
         template = """
              <div class="table-responsive table-modal-body">
                <div class="d-flex justify-content-between mb-2">
-                 <button class="btn btn-danger btn-sm" onclick="CloudSaver_batch_delete()">
-                   <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-trash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
-                     <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
-                     <path d="M4 7l16 0"></path>
-                     <path d="M10 11l0 6"></path>
-                     <path d="M14 11l0 6"></path>
-                     <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"></path>
-                     <path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"></path>
-                   </svg>
-                   批量删除
-                 </button>
+                 <div>
+                   <button class="btn btn-danger btn-sm" onclick="CloudSaver_batch_delete()">
+                     <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-trash" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                       <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+                       <path d="M4 7l16 0"></path>
+                       <path d="M10 11l0 6"></path>
+                       <path d="M14 11l0 6"></path>
+                       <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"></path>
+                       <path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"></path>
+                     </svg>
+                     批量删除
+                   </button>
+                   <button class="btn btn-warning btn-sm ms-2" onclick="CloudSaver_clear_all_history()">
+                     <svg xmlns="http://www.w3.org/2000/svg" class="icon icon-tabler icon-tabler-eraser" width="24" height="24" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                       <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+                       <path d="M19 19H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2z"></path>
+                       <path d="M9 15l6-6"></path>
+                     </svg>
+                     清空全部历史
+                   </button>
+                 </div>
                  <div id="cloudsaver_pagination">
                    <ul class="pagination pagination-sm">
                      {% if page > 1 %}
@@ -857,7 +806,7 @@ class CloudSaver(_IPluginModule):
                          {% elif Item.state == 'NEW' %}
                            <span class="badge bg-blue">新增</span>
                          {% else %}
-                           <span class="badge bg-orange">处理中</span>
+                           <span class="badge bg-orange">处置失败</span>
                          {% endif %}
                        </td>
                        <td>
@@ -943,6 +892,15 @@ class CloudSaver(_IPluginModule):
               });
             }
           }
+
+          // 清空全部搜索历史
+          function CloudSaver_clear_all_history(){
+            if (confirm('确定要清空全部搜索历史吗？此操作不可恢复！')) {
+              ajax_post("run_plugin_method", {"plugin_id": 'CloudSaver', 'method': 'clear_all_history'}, function (ret) {
+                CloudSaver_load_page(1);
+              });
+            }
+          }
           
           // 分页加载
           function CloudSaver_load_page(page){
@@ -950,13 +908,12 @@ class CloudSaver(_IPluginModule):
               "plugin_id": 'CloudSaver',
               "method": 'get_history_page',
               "page": page,
-              "count": 5 
+              "count": 5
             }, function (ret) {
               $("#plugin_page_content").html(ret.result.html);
             });
           }
         """
-
     def delete_search_history(self, history_id):
         """
         删除搜索历史
@@ -974,32 +931,12 @@ class CloudSaver(_IPluginModule):
             if self.delete_search_history(history_id):
                 success_count += 1
         return success_count
-
-    def __update_history(self, title, content, cloud_type, state, cloud_links=None):
+    def clear_all_history(self):
         """
-        插入历史记录
+        清空全部搜索历史
         """
-        if not title:
-            return
-
-        # 生成唯一ID
-        history_id = f"{title}_{cloud_type}_{int(datetime.now().timestamp())}"
-
-        value = {
-            "id": history_id,
-            "title": title,
-            "content": content or "",
-            "cloud_type": cloud_type or "未知",
-            "state": state,
-            "image": "../static/img/plugins/cloud.jpg",  # 使用默认云盘图标
-            "cloud_links": cloud_links or [],
-            "add_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-
-        if self.get_history(key=history_id):
-            self.update_history(key=history_id, value=value)
-        else:
-            self.history(key=history_id, value=value)
+        self.clear_history()
+        return True
 
     def stop_service(self):
         """停止服务"""
