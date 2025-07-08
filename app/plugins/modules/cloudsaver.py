@@ -1,4 +1,5 @@
 import json
+import re
 from app.media.douban import DouBan
 from app.plugins.modules.cloudsaverhelp.cloudsaversdk import CloudResource
 from typing import Dict, List
@@ -526,6 +527,16 @@ class CloudSaver(_IPluginModule):
         """根据评分过滤豆瓣内容"""
         return [res for res in results
                 if float(res.get('vote', 0)) >= min_rating]
+    
+    def _sanitize_title(self, title: str) -> str:
+        """
+        过滤标题中的特殊字符（如emoji、部分特殊符号），只保留常见中英文、数字和常用标点。
+        """
+        # 去除 emoji 和部分特殊符号
+        # 保留中英文、数字、空格、常用标点
+        pattern = re.compile(
+            r'[^\u4e00-\u9fa5a-zA-Z0-9\s\.\,\!\?\-\_\(\)\[\]［］\{\}《》·：:;\'"“”‘’、，。！？【】（）—·…·/\\|@#￥%&*+=~`^$<>]')
+        return pattern.sub('', title)
 
     def search_cloud_resources(self, douban_results: List[Dict]) -> List[CloudResource]:
         """搜索云盘资源并添加豆瓣ID"""
@@ -603,7 +614,7 @@ class CloudSaver(_IPluginModule):
                             # 调用cloud189保存方法
                             if self._cloud189_sdk:
                                 self._cloud189_sdk.save_to_cloud(
-                                    share_link, resource['title'])
+                                    share_link, self._sanitize_title(resource['title']))
                             # 调用cloudsdk保存方法
                             if self._cloudsaver_sdk:
                                 self._cloudsaver_sdk.save_to_cloud(
