@@ -595,36 +595,54 @@ class CloudSaver(_IPluginModule):
 
                 # 直接按照字典结构处理
                 if resource["cloudType"] == "tianyi" and self._cloud189_sdk:
-                    share_link = resource["cloudLinks"][0]["link"]
-                    # 调用cloud189保存方法
-                    if self._cloud189_sdk:
-                        self._cloud189_sdk.save_to_cloud(
-                            share_link, resource['title'])
-                    # 调用cloudsdk保存方法
-                    if self._cloudsaver_sdk:
-                        self._cloudsaver_sdk.save_to_cloud(
-                            share_link, folder_id=self._tianyi_folder_id)
-                    # 标记为保存成功
-                    if self._cloud189_sdk or self._cloudsaver_sdk:
-                        saved_ids.add(douban_id)
-                        self.info(f"成功保存豆瓣ID {douban_id} 的资源")
-                        # 记录成功转存历史
-                        self.__update_history_with_douban_id(
-                            douban_id=douban_id,
-                            title=resource['title'],
-                            content=f"已成功保存到{resource['cloudType']}云盘",
-                            cloud_type=resource['cloudType'],
-                            state='SAVED',
-                            image=resource.get(
-                                'image', '../static/img/no-image.png'),
-                            cloud_links=resource['cloudLinks']
-                        )
-                    else:
+                    save_success = False
+                    last_error = None
+                    for link_info in resource.get("cloudLinks", []):
+                        share_link = link_info.get("link")
+                        try:
+                            # 调用cloud189保存方法
+                            if self._cloud189_sdk:
+                                self._cloud189_sdk.save_to_cloud(
+                                    share_link, resource['title'])
+                            # 调用cloudsdk保存方法
+                            if self._cloudsaver_sdk:
+                                self._cloudsaver_sdk.save_to_cloud(
+                                    share_link, folder_id=self._tianyi_folder_id)
+                            # 标记为保存成功
+                            if self._cloud189_sdk or self._cloudsaver_sdk:
+                                saved_ids.add(douban_id)
+                                self.info(f"成功保存豆瓣ID {douban_id} 的资源")
+                                # 记录成功转存历史
+                                self.__update_history_with_douban_id(
+                                    douban_id=douban_id,
+                                    title=resource['title'],
+                                    content=f"已成功保存到{resource['cloudType']}云盘",
+                                    cloud_type=resource['cloudType'],
+                                    state='SAVED',
+                                    image=resource.get(
+                                        'image', '../static/img/no-image.png'),
+                                    cloud_links=resource['cloudLinks']
+                                )
+                                save_success = True
+                                break
+                        except Exception as e:
+                            last_error = e
+                            # 检查是否为 400 错误，若是则尝试下一个链接，否则直接报错
+                            if hasattr(e, 'response') and getattr(e.response, 'status_code', None) == 400:
+                                self.warn(f"链接失效（400），尝试下一个链接: {share_link}")
+                                continue
+                            elif "400" in str(e):
+                                self.warn(f"链接失效（400），尝试下一个链接: {share_link}")
+                                continue
+                            else:
+                                self.error(f"保存豆瓣ID {douban_id} 失败: {e}")
+                                break
+                    if not save_success:
                         # 记录转存失败历史
                         self.__update_history_with_douban_id(
                             douban_id=douban_id,
                             title=resource['title'],
-                            content=f"保存到{resource['cloudType']}云盘失败",
+                            content=f"保存到{resource['cloudType']}云盘失败: {last_error}",
                             cloud_type=resource['cloudType'],
                             state='ERROR',
                             image=resource.get(

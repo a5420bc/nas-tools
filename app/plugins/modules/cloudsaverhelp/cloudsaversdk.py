@@ -295,7 +295,7 @@ class CloudSaverSDK:
             # 构造请求参数
             params = {
                 'shareCode': linkInfo.get("shareCode"),
-                'receiveCode': linkInfo.get("receiveCode")
+                'receiveCode': linkInfo.get("receiveCode", "")
             }
 
             # 发送请求
@@ -496,8 +496,6 @@ class CloudSaverSDK:
 
             linkInfo = self._parse_share_link(share_url_or_code)
 
-            print(share_info)
-
             # 准备保存请求数据
             save_data = {
                 'shareInfoList': share_info.get('list', []),
@@ -506,12 +504,10 @@ class CloudSaverSDK:
                 'isFolder': share_info.get('isFolder', False),
                 'fids': [item.get('fileId') for item in share_info.get('list', []) if item.get('fileId')],
                 'shareCode': linkInfo.get("shareCode"),
-                'receiveCode': linkInfo.get("receiveCode")
+                'receiveCode': linkInfo.get("receiveCode", "")
             }
             if folder_id:
                 save_data['folderId'] = folder_id
-
-            print(save_data)
 
             request_utils = RequestUtils(
                 headers={
