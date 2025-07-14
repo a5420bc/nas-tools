@@ -480,11 +480,17 @@ class MetaVideoV2(MetaBase):
     def guess_media_item(self, title, subtitle):
         """
         通过标题和副标题获取信息
+        ARM64平台禁用guessit，使用原生正则处理
         """
-        media_item_title = MediaItem(datas=default_api.guessit(title or ""))
-        media_item_subtitle = MediaItem(datas=default_api.guessit(subtitle or ""))
-
-        return media_item_title, media_item_subtitle
+        import platform
+        machine = platform.machine()
+        
+        if machine.lower() in ('aarch64'):
+            return MediaItem({}), MediaItem({})
+        else:
+            media_item_title = MediaItem(datas=default_api.guessit(title or ""))
+            media_item_subtitle = MediaItem(datas=default_api.guessit(subtitle or ""))
+            return media_item_title, media_item_subtitle
 
     def __fix_release_group(self, title):
         if not StringUtils.is_string_and_not_empty(title):
