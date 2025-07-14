@@ -1,11 +1,10 @@
 from datetime import datetime
 from functools import lru_cache
-import time
+
 import requests
 
 from app.utils import RequestUtils
 from app.utils.types import MediaType
-import log
 
 
 class Bangumi(object):
@@ -31,23 +30,8 @@ class Bangumi(object):
         params = {}
         if kwargs:
             params.update(kwargs)
-        
-        # 记录请求开始时间
-        start_time = time.time()
         resp = cls._req.get_res(url=req_url, params=params)
-        request_time = time.time() - start_time
-        log.info(f"[Bangumi] 请求 {req_url} 耗时: {request_time:.3f}秒")
-        
-        if not resp:
-            return None
-            
-        # 记录JSON解析开始时间
-        json_start = time.time()
-        result = resp.json()
-        json_time = time.time() - json_start
-        log.info(f"[Bangumi] JSON解析耗时: {json_time:.3f}秒")
-        
-        return result
+        return resp.json() if resp else None
 
     def calendar(self):
         """
