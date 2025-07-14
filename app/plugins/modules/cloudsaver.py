@@ -65,7 +65,7 @@ class CloudSaver(_IPluginModule):
     # 加载顺序
     module_order = 20
     # 可使用的用户级别
-    auth_level = 2
+    auth_level = 1
 
     # 退出事件
     _event = Event()
@@ -106,6 +106,7 @@ class CloudSaver(_IPluginModule):
                 int(ct) for ct in enabled_cloud_types if str(ct).isdigit()]
         else:
             self._enabled_cloud_types = [1]  # 默认只启用天翼云盘
+        self.info(f"启用的网盘类型: {self._enabled_cloud_types}")
 
         # 天翼云盘配置
         self._tianyi_account_id = config.get("tianyi_account_id", "")
@@ -118,8 +119,12 @@ class CloudSaver(_IPluginModule):
         log.info(f"获取豆瓣订阅类型{data}")
 
         # 获取最低豆瓣评分要求
-        self._min_douban_rating = float(
-            config.get("min_douban_rating", 0.0))
+        min_rating = config.get("min_douban_rating", "0.0")
+        try:
+            self._min_douban_rating = float(min_rating) if min_rating else 0.0
+        except ValueError:
+            self._min_douban_rating = 0.0
+            log.warn(f"无效的最低评分配置值: '{min_rating}'，已使用默认值0.0")
         log.info(f"设置最低豆瓣评分要求: {self._min_douban_rating}")
         # 获取网盘配置
         self._quark_folder_id = config.get("quark_folder_id", "")
