@@ -24,7 +24,6 @@ class TaskResponse(TypedDict):
     error: Optional[str]
 
 
-@singleton
 class Cloud189AutoSaveSDK(object):
     """Cloud189 Auto Save SDK Python版本"""
     

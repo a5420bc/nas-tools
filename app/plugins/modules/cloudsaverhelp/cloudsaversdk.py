@@ -52,7 +52,6 @@ CLOUD_DOMAIN_MAP = {
 }
 
 
-@singleton
 class CloudSaverSDK:
     """CloudSaver SDK Python版本"""
 
