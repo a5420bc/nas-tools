@@ -1,0 +1,28 @@
+#!/usr/bin/with-contenv bash
+# shellcheck shell=bash
+
+umask ${UMASK}
+
+# 配置参数
+MOUNT_NAME="rclone_webdav_alist"
+RCLONE_BIN="/usr/bin/rclone"
+MOUNT_SOURCE="webdav_alist:/"
+MOUNT_POINT="/n3_storage/webdav_alist"
+LOG_FILE="/var/log/${MOUNT_NAME}.log"
+CONFIG_FILE="/nt/.config/rclone/rclone.conf"
+
+# 挂载选项
+MOUNT_OPTS="--copy-links --no-gzip-encoding --no-check-certificate --allow-other --allow-non-empty --umask 000 --use-mmap --log-file ${LOG_FILE} --config ${CONFIG_FILE} --vfs-cache-mode writes"
+
+# 确保目录存在并设置权限
+mkdir -p "$MOUNT_POINT"
+mkdir -p "$(dirname "$CONFIG_FILE")"
+chown nt:nt "$(dirname "$CONFIG_FILE")"
+
+# 加载fuse模块
+if ! grep -q fuse /proc/filesystems; then
+    modprobe fuse
+fi
+
+# 直接执行挂载，s6会负责监控进程
+exec s6-setuidgid nt $RCLONE_BIN mount "$MOUNT_SOURCE" "$MOUNT_POINT" $MOUNT_OPTS
