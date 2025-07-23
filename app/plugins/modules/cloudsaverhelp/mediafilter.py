@@ -1,3 +1,4 @@
+import datetime
 from app.media.meta.metainfo import MetaInfo
 import log
 from typing import List, Dict, Any
@@ -74,25 +75,8 @@ class MediaFilter:
         # 获取搜索电影的元信息
         search_meta = self.media.get_media_info(title=search_movie_info.get('title', ''),
                                                 mtype=MediaType.MOVIE)
-        search_year = search_movie_info.get('year')
 
-        filtered_list = []
-        for media in media_list:
-            title = media.get('title', '')
-            content = media.get('content', '')
-
-            # 使用Media.get_media_info获取更准确的媒体信息
-            media_meta = self.media.get_media_info(title=title,
-                                                   subtitle=content,
-                                                   mtype=MediaType.MOVIE)
-
-            # 判断是否为相同电影
-            if self._is_same_movie(search_meta, media_meta, search_year):
-                filtered_list.append(media)
-            else:
-                media_info = MetaInfo(title, content)
-                log.debug(
-                    f"【MediaFilter】过滤掉不匹配的媒体: {title}; meta_info的标题为 {media_info.cn_name}")
+        filtered_list = self.filter_search_results(media_list, search_meta, datetime.datetime.now())
 
         # 如果过滤后没有匹配到任何数据，使用简单的标题包含比较
         if not filtered_list:
@@ -150,26 +134,8 @@ class MediaFilter:
         # 获取搜索剧集的元信息
         search_meta = self.media.get_media_info(title=search_tv_info.get('title', ''),
                                                 mtype=MediaType.TV)
-        search_season = search_tv_info.get('season')
-        search_episode = search_tv_info.get('episode')
 
-        filtered_list = []
-        for media in media_list:
-            title = media.get('title', '')
-            content = media.get('content', '')
-
-            # 使用Media.get_media_info获取更准确的媒体信息
-            media_meta = self.media.get_media_info(title=title,
-                                                   subtitle=content,
-                                                   mtype=MediaType.TV)
-
-            # 判断是否为相同剧集
-            if self._is_same_tv_episode(search_meta, media_meta, search_season, search_episode):
-                filtered_list.append(media)
-            else:
-                media_info = MetaInfo(title, content)
-                log.debug(
-                    f"【MediaFilter】过滤掉不匹配的媒体: {title}; meta_info的标题为 {media_info.cn_name}")
+        filtered_list = self.filter_search_results(media_list, search_meta, datetime.datetime.now())
 
         # 如果过滤后没有匹配到任何数据，使用简单的标题包含比较
         if not filtered_list:
@@ -271,3 +237,102 @@ class MediaFilter:
             return True
 
         return False
+
+    def filter_search_results(self, result_array: list,
+                              match_media,
+                              start_time):
+        """
+        从搜索结果中匹配符合资源条件的记录
+        """
+        ret_array = []
+        index_sucess = 0
+        index_rule_fail = 0
+        index_match_fail = 0
+        index_error = 0
+        for item in result_array:
+            try:
+                # 名称
+                torrent_name = item.get('title')
+                # 描述
+                description = item.get('content')
+                if not torrent_name:
+                    index_error += 1
+                    continue
+                if match_media:
+                    description = description if description else ""
+                    torrent_name = torrent_name if torrent_name else ""
+                meta_info = MetaInfo(title=torrent_name,
+                                        subtitle=f"{description}",
+                                        mtype=match_media.media_type,
+                                        cn_name=match_media.org_string,
+                                        en_name=match_media.original_title,
+                                        tmdb_id=match_media.tmdb_id,
+                                        imdb_id=match_media.imdb_id)
+                meta_info.set_tmdb_info(self.media.get_tmdb_info(mtype=match_media.media_type,
+                                                            tmdbid=match_media.tmdb_id,
+                                                            append_to_response="all"))
+
+                if not meta_info.get_name():
+                    log.info(f"{torrent_name} 无法识别到名称")
+                    index_match_fail += 1
+                    continue
+
+                # 识别媒体信息
+                if not match_media:
+                    # 不过滤
+                    media_info = meta_info
+                else:
+                    # 0-识别并模糊匹配；1-识别并精确匹配
+                    if meta_info.imdb_id \
+                            and match_media.imdb_id \
+                            and str(meta_info.imdb_id) == str(match_media.imdb_id):
+                        # IMDBID匹配，合并媒体数据
+                        media_info = self.media.merge_media_info(meta_info, match_media)
+                    else:
+                        # 查询缓存
+                        cache_info = self.media.get_cache_info(meta_info)
+                        if match_media \
+                                and str(cache_info.get("id")) == str(match_media.tmdb_id):
+                            # 缓存匹配，合并媒体数据
+                            media_info = self.media.merge_media_info(meta_info, match_media)
+                        else:
+                            # 重新识别
+                            media_info = self.media.get_media_info(title=torrent_name, subtitle=description, chinese=False)
+                            if not media_info:
+                                log.warn(f"{torrent_name} 识别媒体信息出错！")
+                                index_error += 1
+                                continue
+                            elif not media_info.tmdb_info:
+                                log.info(
+                                    f"{torrent_name} 识别为 {media_info.get_name()} 未匹配到媒体信息")
+                                index_match_fail += 1
+                                continue
+                            # TMDBID是否匹配
+                            if str(media_info.tmdb_id) != str(match_media.tmdb_id):
+                                log.info(
+                                    f"{torrent_name} 识别为 "
+                                    f"{media_info.type.value}/{media_info.get_title_string()}/{media_info.tmdb_id} "
+                                    f"与 {match_media.type.value}/{match_media.get_title_string()}/{match_media.tmdb_id} 不匹配")
+                                index_match_fail += 1
+                                continue
+                            # 合并媒体数据
+                            media_info = self.media.merge_media_info(media_info, match_media)
+                # 匹配到了
+                log.info(
+                    f"{torrent_name} {description} 识别为 {media_info.get_title_string()} "
+                    f"{media_info.get_season_episode_string()} 匹配成功")
+                index_sucess += 1
+                ret_array.append(item)
+            except Exception as err:
+                print(str(err))
+        # 循环结束
+        # 计算耗时
+        end_time = datetime.datetime.now()
+        log.info(
+            f"{len(result_array)} 条数据中，"
+            f"过滤 {index_rule_fail}，"
+            f"不匹配 {index_match_fail}，"
+            f"错误 {index_error}，"
+            f"有效 {index_sucess}，"
+            f"耗时 {(end_time - start_time).seconds} 秒")
+        return ret_array

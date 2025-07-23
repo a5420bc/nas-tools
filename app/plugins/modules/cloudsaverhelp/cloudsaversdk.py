@@ -521,9 +521,14 @@ class CloudSaverSDK:
                 json=save_data
             )
 
-            if not response or response.status_code != 200:
-                raise Exception(
-                    f'保存到云盘失败，状态码: {response.status_code if response else "无响应"}')
+            # 打印响应结果
+            if response:
+                log.debug(f"保存到云盘响应: {response.text}")
+
+            if response is None:
+                raise Exception('保存到云盘失败: 无响应')
+            if response.status_code != 200:
+                raise Exception(f'保存到云盘失败，状态码: {response.status_code}')
 
             data = response.json()
             if not data.get('success'):
