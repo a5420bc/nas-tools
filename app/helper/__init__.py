@@ -1,3 +1,4 @@
+from .indexer_helper import IndexerHelper, IndexerConf
 from .chrome_helper import ChromeHelper, init_chrome
 from .meta_helper import MetaHelper
 from .progress_helper import ProgressHelper
